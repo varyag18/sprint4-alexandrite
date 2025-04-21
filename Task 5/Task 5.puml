@@ -1,0 +1,39 @@
+@startuml
+
+autonumber
+
+title Sequence Diagram: Reading orders & updating status with Cache
+
+actor Operator
+participant MES_Frontend as "MES (React)"
+participant MES_API as "MES API (C#)"
+participant Cache as "Redis (Cache)"
+participant DB as "MES DB"
+
+Operator -> MES_Frontend: Open orders page
+MES_Frontend -> MES_API: GET /orders?status=MANUFACTURING_STARTED
+
+alt Cache Hit
+    MES_API -> Cache: GET orders(key=MANUFACTURING_STARTED)
+    Cache --> MES_API: Return orders list
+    MES_API --> MES_Frontend: Return cached orders
+else Cache Miss
+    MES_API -> DB: SELECT * FROM orders WHERE status=MANUFACTURING_STARTED
+    DB --> MES_API: Return orders list
+    MES_API -> Cache: PUT orders(key=MANUFACTURING_STARTED)
+    MES_API --> MES_Frontend: Return orders
+end
+
+Operator -> MES_Frontend: Click "Complete"
+MES_Frontend -> MES_API: POST /orders/{id}/status=MANUFACTURING_COMPLETED
+
+MES_API -> DB: UPDATE orders SET status=MANUFACTURING_COMPLETED...
+DB --> MES_API: Update OK
+
+note over MES_API: Invalidate or update cache
+MES_API -> Cache: DELETE/UPDATE cache(key=MANUFACTURING_STARTED)
+Cache --> MES_API: OK
+
+MES_API --> MES_Frontend: 200 OK, status changed
+
+@enduml

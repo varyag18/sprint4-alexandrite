@@ -1,0 +1,51 @@
+@startuml JeweleryStoreSystemC4
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Container.puml
+
+'--- Определяем внешних пользователей (Person) ---
+Person(customer, "Customer", "Description of external person.")
+Person(seller, "Seller", "Operates with order, confirms manufacturing for the user")
+Person(apiUser, "API user", "Description of external person.")
+Person(operator, "Operator", "Takes order in work, manufactures jewelry")
+'--- Граница системы (System Boundary) ---
+Boundary(jewelrySystem, "Jewelry Store System") {
+  
+  Container(internetShop, "Internet Shop", "Vue, TS, ThreeJS", "User can make an order, upload 3D model, work in 3D editor")
+  Container(shopApi, "Shop API", "SpringBoot", "- Provide list of shop items\n- Receives user-generated 3D file\n- Saves info about order")
+  ContainerDb(shopDb, "Shop DB", "PostgreSQL", "Holds main info about customers & orders")
+  Container(crm, "CRM", "Vue, TS", "Description of web browser container role/responsibility")
+  Container(crmApi, "CRM API", "SpringBoot", "Description of container role/responsibility")
+  Container(otelCollector, "OpenTelemetry Collector", "OpenTelemetry", "Collects and exports traces to Jaeger") #orange
+    Container(jaeger, "Jaeger", "Distributed Tracing", "Stores spans, offers UI to visualize call chains") #black
+    Container(alerts, "Alert Manager / Grafana", "Prometheus stack", "Visualizes metrics, sets alerts for slow or stuck orders") #black
+  Container(mes, "MES", "React, TS", "Interface to assign orders on operators, shows list of orders")
+  Container(mesApi, "MES API", "C#", "- Assigns orders on operators\n- Shows list of orders\n- Calculates price of order")
+  ContainerDb(mesDb, "MES DB", "PostgreSQL", "Holds info about orders, assignments, statuses from MES perspective")
+  ContainerQueue(rmq, "Messages Queue", "RabbitMQ", "Sends and receives messages about new orders, changes of statuses, etc. (bidirectional)")
+  Container(fileStorage, "3D Files Storage", "S3-based", "Stores 3D files so they can be calculated")
+  
+}
+'--- Описываем связи (Rel) ---
+Rel(customer, internetShop, "Uses")
+Rel(seller, crm, "Uses")
+Rel(operator, mes, "Uses")
+Rel(apiUser, mesApi, "API calls")
+Rel(internetShop, shopApi, "REST/HTTPS")
+Rel(shopApi, shopDb, "SQL/JDBC")
+Rel(crm, crmApi, "REST/HTTPS")
+Rel(crmApi, shopDb, "SQL/JDBC")
+Rel(crmApi, rmq, "Publishes messages")
+Rel(rmq, crmApi, "Сonsumes messages")
+Rel(mesApi, rmq, "Publishes messages")
+Rel(rmq, mesApi, "Сonsumes messages")
+Rel(mes, mesApi, "REST/HTTPS")
+Rel(mesApi, mesDb, "SQL/JDBC")
+Rel(mesApi, fileStorage, "Fetches 3D files")
+Rel(shopApi, fileStorage, "Uploads 3D files")
+Rel(crmApi, fileStorage, "Writes/reads 3D files (corrected)")
+'--- Трейсинг ---
+Rel(shopApi, otelCollector, "Sends traces (OTLP)")
+Rel(crmApi, otelCollector, "Sends traces (OTLP)")
+Rel(mesApi, otelCollector, "Sends traces (OTLP)")
+Rel(otelCollector, jaeger, "Exports spans")
+Rel(otelCollector, alerts, "Exports metrics/traces for alerting")
+@enduml

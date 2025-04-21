@@ -1,0 +1,90 @@
+
+
+Список систем для трейсинга:
+
+    CRM, Shop, MES, очередь, хранилище.
+
+Мотивация
+
+    Без трейсинга в распределенной инсталляции сложно определить, что было с заказом.
+
+    Список метрик:
+
+        - Mean Time to Detect (MTTD) и Mean Time to Repair (MTTR). Трейсинг показывает точку, где «завис» заказ (MES, CRM, очередь). Это ускоряет поиск корневой причины, уменьшая время диагностики.
+        - Error Rate (уровень ошибок 5xx). Со сквозным трейсингом мы видим, где появляются 5xx-ошибки (Shop API, CRM API, MES API), проще анализируем их частоту и причину.
+		- Среднее время полного прохождения заказа. Помогает собирать как длинные от Initiated до Closed, так и короткие отрезки.
+
+Предлагаемое решение
+
+    Использовать OpenTelemetry (Java, .NET) в Shop API, CRM API, MES API с экспортом в Jaeger.
+    Jaeger для хранения и UI для просмотра трейсинга.
+    Grafana — дополнительные метрики на основе трейсинга.
+    Обновление кода сервисов: внедрить библиотеки OTel, передавать изнес-атрибуты как теги.
+    RabbitMQ: при publish/subscribe передавать traceId в заголовках, чтобы восстановить полную цепочку.
+
+Компромиссы
+
+    Сложность внедрения OTel в проприетарных/legacy-компонентах из-за доработки кода.
+    Повышается нагрузка на Collector и Jaeger пропорционально RPS.
+
+Безопасность
+
+    Двухфакторная аутентификация в UI.
+    Криптостойкое шифрование трафика с данными трейсинга.
+    Обфускация полей (для чувствительных данных).
+
+Автоматический мониторинг
+
+    Формируем метрики в Colector -> Отправляем в Grafana -> При превышении порога уведомления команде мониторинга
+	
+@startuml JewelryStoreSystemC4
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Container.puml
+
+'--- Определяем внешних пользователей (Person) ---
+Person(customer, "Customer", "Description of external person.")
+Person(seller, "Seller", "Operates with order, confirms manufacturing for the user")
+Person(apiUser, "API user", "Description of external person.")
+Person(operator, "Operator", "Takes order in work, manufactures jewelry")
+'--- Граница системы (System Boundary) ---
+Boundary(jewelrySystem, "Jewelry Store System") {
+  
+  Container(internetShop, "Internet Shop", "Vue, TS, ThreeJS", "User can make an order, upload 3D model, work in 3D editor")
+  Container(shopApi, "Shop API", "SpringBoot", "- Provide list of shop items\n- Receives user-generated 3D file\n- Saves info about order")
+  ContainerDb(shopDb, "Shop DB", "PostgreSQL", "Holds main info about customers & orders")
+  Container(crm, "CRM", "Vue, TS", "Description of web browser container role/responsibility")
+  Container(crmApi, "CRM API", "SpringBoot", "Description of container role/responsibility")
+  Container(otelCollector, "OpenTelemetry Collector", "OpenTelemetry", "Collects and exports traces to Jaeger") #orange
+    Container(jaeger, "Jaeger", "Distributed Tracing", "Stores spans, offers UI to visualize call chains") #black
+    Container(alerts, "Alert Manager / Grafana", "Prometheus stack", "Visualizes metrics, sets alerts for slow or stuck orders") #black
+  Container(mes, "MES", "React, TS", "Interface to assign orders on operators, shows list of orders")
+  Container(mesApi, "MES API", "C#", "- Assigns orders on operators\n- Shows list of orders\n- Calculates price of order")
+  ContainerDb(mesDb, "MES DB", "PostgreSQL", "Holds info about orders, assignments, statuses from MES perspective")
+  ContainerQueue(rmq, "Messages Queue", "RabbitMQ", "Sends and receives messages about new orders, changes of statuses, etc. (bidirectional)")
+  Container(fileStorage, "3D Files Storage", "S3-based", "Stores 3D files so they can be calculated")
+  
+}
+'--- Описываем связи (Rel) ---
+Rel(customer, internetShop, "Uses")
+Rel(seller, crm, "Uses")
+Rel(operator, mes, "Uses")
+Rel(apiUser, mesApi, "API calls")
+Rel(internetShop, shopApi, "REST/HTTPS")
+Rel(shopApi, shopDb, "SQL/JDBC")
+Rel(crm, crmApi, "REST/HTTPS")
+Rel(crmApi, shopDb, "SQL/JDBC")
+Rel(crmApi, rmq, "Publishes messages")
+Rel(rmq, crmApi, "Сonsumes messages")
+Rel(mesApi, rmq, "Publishes messages")
+Rel(rmq, mesApi, "Сonsumes messages")
+Rel(mes, mesApi, "REST/HTTPS")
+Rel(mesApi, mesDb, "SQL/JDBC")
+Rel(mesApi, fileStorage, "Fetches 3D files")
+Rel(shopApi, fileStorage, "Uploads 3D files")
+Rel(crmApi, fileStorage, "Writes/reads 3D files (corrected)")
+'--- Трейсинг ---
+Rel(shopApi, otelCollector, "Sends traces (OTLP)")
+Rel(crmApi, otelCollector, "Sends traces (OTLP)")
+Rel(mesApi, otelCollector, "Sends traces (OTLP)")
+Rel(otelCollector, jaeger, "Exports spans")
+Rel(otelCollector, alerts, "Exports metrics/traces for alerting")
+@enduml

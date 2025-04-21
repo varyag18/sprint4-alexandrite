@@ -1,0 +1,74 @@
+@startuml LoggingSystemC4
+!include https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Container.puml
+
+'--- АКТОРЫ (внешние пользователи) ---
+Person(customer, "Customer", "Создает заказ в Internet Shop")
+Person(seller, "Seller", "Работает с заказами через CRM")
+Person(apiUser, "API user", "Взаимодействует с MES API")
+Person(operator, "Operator", "Производит изделия через MES")
+
+'--- ГРАНИЦА СИСТЕМЫ ---
+Boundary(jewelrySystem, "Jewelry Store System") {
+
+  Container(internetShop, "Internet Shop", "Vue, TS, ThreeJS", "User can make an order, upload 3D model")
+  Container(shopApi, "Shop API", "SpringBoot", "Handles orders, files, interacts with Shop DB") #blue
+  ContainerDb(shopDb, "Shop DB", "PostgreSQL", "Data about customers & orders") #blue
+
+  Container(crm, "CRM", "Vue, TS", "Sellers confirm manufacturing")
+  Container(crmApi, "CRM API", "SpringBoot", "Handles order statuses, interacts with RabbitMQ & 3D Storage") #blue
+
+  Container(mes, "MES", "React, TS", "Operators manage production")
+  Container(mesApi, "MES API", "C#", "Calculates price, interacts with MES DB, RabbitMQ") #blue
+  ContainerDb(mesDb, "MES DB", "PostgreSQL", "Stores production details") #blue
+
+  ContainerQueue(rmq, "Messages Queue", "RabbitMQ", "Bidirectional exchange of status messages") #blue
+  Container(fileStorage, "3D Files Storage", "S3-based", "Stores 3D models") #blue
+
+  Container(otelCollector, "OpenTelemetry Collector", "OpenTelemetry", "Collects and exports traces to Jaeger") #black
+  Container(jaeger, "Jaeger", "Distributed Tracing", "Stores spans, offers UI to visualize call chains") #black
+  Container(alerts, "Alert Manager / Grafana", "Prometheus stack", "Visualizes metrics, sets alerts for slow or stuck orders") #orange
+
+  '--- Новый блок для логирования ---
+  Container(logAggregator, "Log Aggregator", "Fluent Bit / Logstash / etc.", "Collects logs from #blue containers")
+  Container(logStorage, "Logs Storage", "Elasticsearch / Loki", "Central place for searching & analyzing logs")
+
+}
+
+'--- СВЯЗИ ---
+Rel(customer, internetShop, "Uses")
+Rel(internetShop, shopApi, "REST/HTTPS")
+Rel(shopApi, shopDb, "SQL/JDBC")
+Rel(seller, crm, "Uses")
+Rel(crm, crmApi, "REST/HTTPS")
+Rel(crmApi, shopDb, "SQL/JDBC")
+Rel(crmApi, rmq, "Publishes messages")
+Rel(rmq, crmApi, "Сonsumes messages")
+Rel(mesApi, rmq, "Publishes messages")
+Rel(rmq, mesApi, "Сonsumes messages")
+Rel(operator, mes, "Uses")
+Rel(mes, mesApi, "REST/HTTPS")
+Rel(mesApi, mesDb, "SQL/JDBC")
+Rel(mesApi, fileStorage, "3D files read/write")
+Rel(shopApi, fileStorage, "Uploads 3D files")
+Rel(crmApi, fileStorage, "Downloads/Uploads files")
+
+'--- Трейсинг ---
+Rel(shopApi, otelCollector, "Sends traces (OTLP)")
+Rel(crmApi, otelCollector, "Sends traces (OTLP)")
+Rel(mesApi, otelCollector, "Sends traces (OTLP)")
+Rel(otelCollector, jaeger, "Exports spans")
+Rel(otelCollector, alerts, "Exports metrics/traces for alerting")
+
+'--- Логирование: каждое #blue-сущность отправляет логи в Aggregator ---
+Rel(shopApi, logAggregator, "Sends logs")
+Rel(shopDb, logAggregator, "DB logs/queries")
+Rel(crmApi, logAggregator, "Sends logs")
+Rel(mesApi, logAggregator, "Sends logs")
+Rel(mesDb, logAggregator, "DB logs/queries")
+Rel(rmq, logAggregator, "Publishes RabbitMQ events/logs")
+Rel(fileStorage, logAggregator, "Audit logs (PUT/GET)")
+
+'--- Агрегатор -> Хранилище логов ---
+Rel(logAggregator, logStorage, "Stores logs for analysis")
+
+@enduml
